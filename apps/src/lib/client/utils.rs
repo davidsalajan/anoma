@@ -37,7 +37,7 @@ use crate::config::{
 };
 use crate::node::gossip;
 use crate::node::ledger::tendermint_node;
-use crate::wallet::Wallet;
+use crate::wallet::{pre_genesis, Wallet};
 use crate::wasm_loader;
 
 pub const NET_ACCOUNTS_DIR: &str = "setup";
@@ -109,58 +109,23 @@ pub async fn join_network(
 
     // Pre-load the validator pre-genesis wallet and its keys to validate that
     // everything is in place before downloading the network archive
-    let validator_keys = if let Some((validator_alias, pre_genesis_dir)) =
-        validator_alias_and_dir
-    {
-        let mut pre_genesis_wallet = Wallet::load(&pre_genesis_dir)
-            .unwrap_or_else(|| {
-                eprintln!(
-                    "No pre-genesis wallet found in {}",
-                    pre_genesis_dir.to_string_lossy()
-                );
-                cli::safe_exit(1)
-            });
-
-        let alias = validator_key_alias(&validator_alias);
-        pre_genesis_wallet.find_key(&alias).unwrap_or_else(|_err| {
-            eprintln!("Missing validator key with alias {}", alias);
-            cli::safe_exit(1)
-        });
-
-        let alias = consensus_key_alias(&validator_alias);
-        let consensus_key =
-            pre_genesis_wallet.find_key(&alias).unwrap_or_else(|_err| {
-                eprintln!("Missing consensus key with alias {}", alias);
-                cli::safe_exit(1)
-            });
-
-        let alias = rewards_key_alias(&validator_alias);
-        pre_genesis_wallet.find_key(&alias).unwrap_or_else(|_err| {
-            eprintln!("Missing rewards key with alias {}", alias);
-            cli::safe_exit(1)
-        });
-
-        let alias = tendermint_node_key_alias(&validator_alias);
-        let tendermint_node_key =
-            pre_genesis_wallet.find_key(&alias).unwrap_or_else(|_err| {
-                eprintln!("Missing validator key with alias {}", alias);
-                cli::safe_exit(1)
-            });
-
-        let tendermint_node_key: ed25519::SecretKey =
-            tendermint_node_key.try_to_sk().unwrap_or_else(|_err| {
-                eprintln!("Tendermint node key must be ed25519");
-                cli::safe_exit(1)
-            });
-        Some((
-            validator_alias,
-            pre_genesis_wallet,
-            consensus_key,
-            tendermint_node_key,
-        ))
-    } else {
-        None
-    };
+    let validator_alias_and_pre_genesis_wallet =
+        if let Some((validator_alias, pre_genesis_dir)) =
+            validator_alias_and_dir
+        {
+            Some((
+                validator_alias,
+                pre_genesis::ValidatorWallet::load(&pre_genesis_dir)
+                    .unwrap_or_else(|err| {
+                        eprintln!(
+                            "Error loading validator pre-genesis wallet {err}",
+                        );
+                        cli::safe_exit(1)
+                    }),
+            ))
+        } else {
+            None
+        };
 
     let wasm_dir = global_args.wasm_dir.as_ref().cloned().or_else(|| {
         if let Ok(wasm_dir) = env::var(ENV_VAR_WASM_DIR) {
@@ -294,13 +259,17 @@ pub async fn join_network(
     }
 
     // Setup the node for a genesis validator, if used
-    if let Some((
-        validator_alias,
-        pre_genesis_wallet,
-        consensus_key,
-        tendermint_node_key,
-    )) = validator_keys
+    if let Some((validator_alias, pre_genesis_wallet)) =
+        validator_alias_and_pre_genesis_wallet
     {
+        let tendermint_node_key: ed25519::SecretKey = pre_genesis_wallet
+            .tendermint_node_key
+            .try_to_sk()
+            .unwrap_or_else(|_err| {
+                eprintln!("Tendermint node key must be ed25519");
+                cli::safe_exit(1)
+            });
+
         let genesis_file_path =
             base_dir.join(format!("{}.toml", chain_id.as_str()));
         let mut wallet =
@@ -325,7 +294,7 @@ pub async fn join_network(
         tendermint_node::write_validator_key(
             &tm_home_dir,
             &address,
-            &*consensus_key,
+            &*pre_genesis_wallet.consensus_key,
         );
 
         // Write tendermint node key
@@ -337,7 +306,10 @@ pub async fn join_network(
         // Extend the current wallet from the pre-genesis wallet.
         // This takes the validator keys to be usable in future commands (e.g.
         // to sign a tx from validator account using the account key).
-        wallet.extend(pre_genesis_wallet);
+        wallet.extend_from_pre_genesis_validator(
+            validator_alias,
+            pre_genesis_wallet,
+        );
 
         wallet.set_validator_address(address);
 
@@ -1045,58 +1017,56 @@ pub fn init_genesis_validator(
 ) {
     let pre_genesis_dir =
         validator_pre_genesis_dir(&global_args.base_dir, &alias);
-    let mut wallet = Wallet::load_or_new(&pre_genesis_dir);
-
-    println!("Generating validator account key...");
-    let (validator_key_alias, validator_key) =
-        wallet.gen_key(Some(validator_key_alias(&alias)), unsafe_dont_encrypt);
-    println!("Generating consensus key...");
-    let (consensus_key_alias, consensus_key) =
-        wallet.gen_key(Some(consensus_key_alias(&alias)), unsafe_dont_encrypt);
-    println!("Generating staking reward account key...");
-    let (rewards_key_alias, rewards_key) =
-        wallet.gen_key(Some(rewards_key_alias(&alias)), unsafe_dont_encrypt);
-
-    println!("Generating tendermint node key...");
-    let (tendermint_node_alias, tendermint_node_key) = wallet
-        .gen_key(Some(tendermint_node_key_alias(&alias)), unsafe_dont_encrypt);
-
-    println!("Generating protocol key and DKG session key...");
-    let validator_keys = wallet.gen_validator_keys(None).unwrap();
-    let protocol_key = validator_keys.get_protocol_keypair().ref_to();
-    let dkg_public_key = validator_keys
-        .dkg_keypair
-        .as_ref()
-        .expect("DKG session keypair should exist.")
-        .public();
-    wallet.add_validator_keys(validator_keys);
-    wallet.save().unwrap_or_else(|err| eprintln!("{}", err));
-
-    println!();
-    println!("The validator's keys were stored in the wallet:");
-    println!("  Validator account key \"{}\"", validator_key_alias);
-    println!("  Consensus key \"{}\"", consensus_key_alias);
-    println!("  Staking reward key \"{}\"", rewards_key_alias);
-    println!("  Tendermint node key \"{}\"", tendermint_node_alias);
-    println!();
+    println!("Generating validator keys...");
+    let pre_genesis = pre_genesis::ValidatorWallet::gen_and_store(
+        unsafe_dont_encrypt,
+        &pre_genesis_dir,
+    )
+    .unwrap_or_else(|err| {
+        eprintln!(
+            "Unable to generate the validator pre-genesis wallet: {}",
+            err
+        );
+        cli::safe_exit(1)
+    });
+    println!(
+        "The validator's keys were stored in the wallet at {}",
+        pre_genesis::validator_file_name(pre_genesis_dir).to_string_lossy()
+    );
 
     let validator_config = ValidatorPreGenesisConfig {
         validator: HashMap::from_iter([(
             alias,
             genesis_config::ValidatorConfig {
                 consensus_public_key: Some(HexString(
-                    consensus_key.ref_to().to_string(),
+                    pre_genesis.consensus_key.ref_to().to_string(),
                 )),
                 account_public_key: Some(HexString(
-                    validator_key.ref_to().to_string(),
+                    pre_genesis.account_key.ref_to().to_string(),
                 )),
                 staking_reward_public_key: Some(HexString(
-                    rewards_key.ref_to().to_string(),
+                    pre_genesis.rewards_key.ref_to().to_string(),
                 )),
-                protocol_public_key: Some(HexString(protocol_key.to_string())),
-                dkg_public_key: Some(HexString(dkg_public_key.to_string())),
+                protocol_public_key: Some(HexString(
+                    pre_genesis
+                        .store
+                        .validator_keys
+                        .protocol_keypair
+                        .ref_to()
+                        .to_string(),
+                )),
+                dkg_public_key: Some(HexString(
+                    pre_genesis
+                        .store
+                        .validator_keys
+                        .dkg_keypair
+                        .as_ref()
+                        .unwrap()
+                        .public()
+                        .to_string(),
+                )),
                 tendermint_node_key: Some(HexString(
-                    tendermint_node_key.ref_to().to_string(),
+                    pre_genesis.tendermint_node_key.ref_to().to_string(),
                 )),
                 net_address: Some(net_address.to_string()),
                 ..Default::default()

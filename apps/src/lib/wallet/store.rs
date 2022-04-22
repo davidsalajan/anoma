@@ -18,6 +18,7 @@ use thiserror::Error;
 
 use super::alias::Alias;
 use super::keys::StoredKeypair;
+use super::pre_genesis;
 use crate::cli;
 use crate::config::genesis::genesis_config::GenesisConfig;
 
@@ -258,14 +259,6 @@ impl Store {
         self.validator_address = Some(address);
     }
 
-    fn generate_keypair() -> common::SecretKey {
-        use rand::rngs::OsRng;
-        let mut csprng = OsRng {};
-        ed25519::SigScheme::generate(&mut csprng)
-            .try_to_sk()
-            .unwrap()
-    }
-
     /// Generate a new keypair and insert it into the store with the provided
     /// alias. If none provided, the alias will be the public key hash.
     /// If no password is provided, the keypair will be stored raw without
@@ -276,10 +269,9 @@ impl Store {
         alias: Option<String>,
         password: Option<String>,
     ) -> (Alias, Rc<common::SecretKey>) {
-        let keypair = Self::generate_keypair();
-        let pkh: PublicKeyHash = PublicKeyHash::from(&keypair.ref_to());
-        let (keypair_to_store, raw_keypair) =
-            StoredKeypair::new(keypair, password);
+        let sk = gen_sk();
+        let pkh: PublicKeyHash = PublicKeyHash::from(&sk.ref_to());
+        let (keypair_to_store, raw_keypair) = StoredKeypair::new(sk, password);
         let address = Address::Implicit(ImplicitAddress(pkh.clone()));
         let alias: Alias = alias.unwrap_or_else(|| pkh.clone().into()).into();
         if self
@@ -303,8 +295,7 @@ impl Store {
     pub fn gen_validator_keys(
         protocol_keypair: Option<common::SecretKey>,
     ) -> ValidatorKeys {
-        let protocol_keypair =
-            protocol_keypair.unwrap_or_else(Self::generate_keypair);
+        let protocol_keypair = protocol_keypair.unwrap_or_else(gen_sk);
         let dkg_keypair = ferveo_common::Keypair::<EllipticCurve>::new(
             &mut StdRng::from_entropy(),
         );
@@ -408,15 +399,20 @@ impl Store {
         Some(alias)
     }
 
-    /// Extend this store from another store.
-    pub fn extend(&mut self, other: Self) {
+    /// Extend this store from pre-genesis validator wallet.
+    pub fn extend_from_pre_genesis_validator(
+        &mut self,
+        validator_alias: Alias,
+        other: pre_genesis::ValidatorWallet,
+    ) {
+        // TODO add keys with aliases
         self.keys.extend(other.keys.into_iter());
         self.addresses.extend(other.addresses.into_iter());
         self.pkhs.extend(other.pkhs.into_iter());
-        self.validator_address =
-            self.validator_address.take().or(other.validator_address);
-        self.validator_keys =
-            self.validator_keys.take().or(other.validator_keys);
+        self.validator_keys = self
+            .validator_keys
+            .take()
+            .or(Some(other.store.validator_keys));
     }
 
     fn decode(data: Vec<u8>) -> Result<Self, toml::de::Error> {
@@ -487,6 +483,15 @@ const FILE_NAME: &str = "wallet.toml";
 /// Get the path to the wallet store.
 pub fn wallet_file(store_dir: impl AsRef<Path>) -> PathBuf {
     store_dir.as_ref().join(FILE_NAME)
+}
+
+/// Generate a new secret key.
+pub fn gen_sk() -> common::SecretKey {
+    use rand::rngs::OsRng;
+    let mut csprng = OsRng {};
+    ed25519::SigScheme::generate(&mut csprng)
+        .try_to_sk()
+        .unwrap()
 }
 
 #[cfg(all(test, feature = "dev"))]
