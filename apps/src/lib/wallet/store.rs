@@ -49,7 +49,7 @@ pub struct ValidatorData {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Store {
-    /// Special keys if the wallet belongs to a validator
+    /// The validator's address, if the wallet belongs to a validator
     pub(crate) validator_address: Option<Address>,
     /// Cryptographic keypairs
     keys: HashMap<Alias, StoredKeypair>,
