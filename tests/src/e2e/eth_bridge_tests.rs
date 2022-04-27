@@ -8,25 +8,15 @@ use crate::{run, run_as};
 
 const ETH_BRIDGE_ADDRESS: &str = "atest1v9hx7w36g42ysgzzwf5kgem9ypqkgerjv4ehxgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpq8f99ew";
 
-/// # Examples
-///
-/// ```
-/// let storage_key = storage_key("queue");
-/// assert_eq!(storage_key, "#atest1v9hx7w36g42ysgzzwf5kgem9ypqkgerjv4ehxgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpq8f99ew/queue");
-/// ```
-fn storage_key(path: &str) -> String {
-    format!("#{ETH_BRIDGE_ADDRESS}/{}", path)
-}
-
 #[test]
-fn everything() {
+fn ethbridge() {
     const LEDGER_STARTUP_TIMEOUT_SECONDS: u64 = 30;
     const CLIENT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
     const SOLE_VALIDATOR: Who = Who::Validator(0);
 
     let test = setup::single_node_net().unwrap();
 
-    let mut anoman_ledger = run_as!(
+    let mut ledger = run_as!(
         test,
         SOLE_VALIDATOR,
         Bin::Node,
@@ -34,19 +24,18 @@ fn everything() {
         Some(LEDGER_STARTUP_TIMEOUT_SECONDS)
     )
     .unwrap();
-    anoman_ledger
-        .exp_string("Anoma ledger node started")
+    ledger.exp_string("Anoma ledger node started").unwrap();
+    ledger.exp_string("Tendermint node started").unwrap();
+    ledger.exp_string("Committed block hash").unwrap();
+
+    let tx_data_path = test.base_dir.path().join("tx.data");
+    std::fs::write(&tx_data_path, format!("#{ETH_BRIDGE_ADDRESS}/queue"))
         .unwrap();
-    anoman_ledger.exp_string("Tendermint node started").unwrap();
-    anoman_ledger.exp_string("Committed block hash").unwrap();
-
-    let tx_data_path = test.base_dir.path().join("queue_storage_key.txt");
-    std::fs::write(&tx_data_path, &storage_key("queue")[..]).unwrap();
-
-    let tx_code_path = wasm_abs_path(TX_WRITE_STORAGE_KEY_WASM);
 
     let tx_data_path = tx_data_path.to_string_lossy().to_string();
-    let tx_code_path = tx_code_path.to_string_lossy().to_string();
+    let tx_code_path = wasm_abs_path(TX_WRITE_STORAGE_KEY_WASM)
+        .to_string_lossy()
+        .to_string();
     let ledger_addr = get_actor_rpc(&test, &SOLE_VALIDATOR);
     let tx_args = vec![
         "tx",
@@ -66,7 +55,7 @@ fn everything() {
         } else {
             tx_args.clone()
         };
-        let mut anomac_tx = run!(
+        let mut client = run!(
             test,
             Bin::Client,
             tx_args,
@@ -76,18 +65,18 @@ fn everything() {
 
         if !dry_run {
             if !cfg!(feature = "ABCI") {
-                anomac_tx.exp_string("Transaction accepted").unwrap();
+                client.exp_string("Transaction accepted").unwrap();
             }
-            anomac_tx.exp_string("Transaction applied").unwrap();
+            client.exp_string("Transaction applied").unwrap();
         }
         // TODO: we should check here explicitly with the ledger via a
         //  Tendermint RPC call that the path `value/#EthBridge/queue`
         //  is unchanged rather than relying solely  on looking at anomac
         //  stdout.
-        anomac_tx.exp_string("Transaction is invalid").unwrap();
-        anomac_tx
+        client.exp_string("Transaction is invalid").unwrap();
+        client
             .exp_string(&format!("Rejected: {}", ETH_BRIDGE_ADDRESS))
             .unwrap();
-        anomac_tx.assert_success();
+        client.assert_success();
     }
 }
