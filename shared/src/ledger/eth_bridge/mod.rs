@@ -45,15 +45,28 @@ where
     fn validate_tx(
         &self,
         _tx_data: &[u8],
-        _keys_changed: &BTreeSet<Key>,
+        keys_changed: &BTreeSet<Key>,
         _verifiers: &BTreeSet<Address>,
     ) -> Result<bool, Self::Error> {
         tracing::debug!(
             tx_data_len = _tx_data.len(),
-            keys_changed_len = _keys_changed.len(),
+            keys_changed_len = keys_changed.len(),
             verifiers_len = _verifiers.len(),
             "Validity predicate triggered",
         );
-        Ok(false)
+        // TODO: allow only protocol txs
+
+        // TODO: this should come in a PR after protocol tx allowed
+        for key in keys_changed {
+            if !storage::queue_key().eq(key) {
+                tracing::debug!(
+                    key = key.to_string().as_str(),
+                    "Rejecting change to key",
+                );
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 }
