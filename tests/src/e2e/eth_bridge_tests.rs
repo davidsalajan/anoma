@@ -8,6 +8,16 @@ use crate::{run, run_as};
 
 const ETH_BRIDGE_ADDRESS: &str = "atest1v9hx7w36g42ysgzzwf5kgem9ypqkgerjv4ehxgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpq8f99ew";
 
+/// # Examples
+///
+/// ```
+/// let storage_key = storage_key("queue");
+/// assert_eq!(storage_key, "#atest1v9hx7w36g42ysgzzwf5kgem9ypqkgerjv4ehxgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpq8f99ew/queue");
+/// ```
+fn storage_key(path: &str) -> String {
+    format!("#{ETH_BRIDGE_ADDRESS}/{}", path)
+}
+
 #[test]
 fn ethbridge() {
     const LEDGER_STARTUP_TIMEOUT_SECONDS: u64 = 30;
@@ -29,8 +39,7 @@ fn ethbridge() {
     ledger.exp_string("Committed block hash").unwrap();
 
     let tx_data_path = test.base_dir.path().join("tx.data");
-    std::fs::write(&tx_data_path, format!("#{ETH_BRIDGE_ADDRESS}/queue"))
-        .unwrap();
+    std::fs::write(&tx_data_path, storage_key("queue")).unwrap();
 
     let tx_data_path = tx_data_path.to_string_lossy().to_string();
     let tx_code_path = wasm_abs_path(TX_WRITE_STORAGE_KEY_WASM)
@@ -39,8 +48,6 @@ fn ethbridge() {
     let ledger_addr = get_actor_rpc(&test, &SOLE_VALIDATOR);
     let tx_args = vec![
         "tx",
-        "--signer",
-        ALBERT,
         "--code-path",
         &tx_code_path,
         "--data-path",
@@ -49,34 +56,39 @@ fn ethbridge() {
         &ledger_addr,
     ];
 
-    for &dry_run in &[true, false] {
-        let tx_args = if dry_run {
-            vec![tx_args.clone(), vec!["--dry-run"]].concat()
-        } else {
-            tx_args.clone()
-        };
-        let mut client = run!(
-            test,
-            Bin::Client,
-            tx_args,
-            Some(CLIENT_COMMAND_TIMEOUT_SECONDS)
-        )
-        .unwrap();
+    println!("Test a transaction signed with a non-validator key is rejected");
+    {
+        let mut tx_args = tx_args.clone();
+        tx_args.append(&mut vec!["--signer", &ALBERT]);
 
-        if !dry_run {
-            if !cfg!(feature = "ABCI") {
-                client.exp_string("Transaction accepted").unwrap();
-            }
-            client.exp_string("Transaction applied").unwrap();
-        }
-        // TODO: we should check here explicitly with the ledger via a
-        //  Tendermint RPC call that the path `value/#EthBridge/queue`
-        //  is unchanged rather than relying solely  on looking at anomac
-        //  stdout.
-        client.exp_string("Transaction is invalid").unwrap();
-        client
-            .exp_string(&format!("Rejected: {}", ETH_BRIDGE_ADDRESS))
+        for &dry_run in &[true, false] {
+            let tx_args = if dry_run {
+                vec![tx_args.clone(), vec!["--dry-run"]].concat()
+            } else {
+                tx_args.clone()
+            };
+            let mut client = run!(
+                test,
+                Bin::Client,
+                tx_args,
+                Some(CLIENT_COMMAND_TIMEOUT_SECONDS)
+            )
             .unwrap();
-        client.assert_success();
+
+            if !dry_run {
+                if !cfg!(feature = "ABCI") {
+                    client.exp_string("Transaction accepted").unwrap();
+                }
+                client.exp_string("Transaction applied").unwrap();
+            }
+            // TODO: we should check here explicitly with the ledger via a
+            //  Tendermint RPC call that the path `value/#EthBridge/queue`
+            //  is unchanged rather than relying solely  on looking at anomac
+            //  stdout.
+            client.exp_string("Transaction is invalid").unwrap();
+            client
+                .exp_string(&format!("Rejected: {}", ETH_BRIDGE_ADDRESS))
+                .unwrap();
+            client.assert_success();
+        }
     }
-}
