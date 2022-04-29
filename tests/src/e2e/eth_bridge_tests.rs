@@ -1,3 +1,9 @@
+use std::str::FromStr;
+
+use anoma::proto::Tx;
+use anoma::types::key::{common, RefTo};
+use anoma::types::transaction::protocol::ProtocolTxType;
+
 use crate::e2e::helpers::get_actor_rpc;
 use crate::e2e::setup;
 use crate::e2e::setup::constants::{
@@ -39,12 +45,14 @@ fn ethbridge() {
     ledger.exp_string("Committed block hash").unwrap();
 
     let tx_data_path = test.base_dir.path().join("tx.data");
-    std::fs::write(&tx_data_path, storage_key("queue")).unwrap();
+    let tx_data_contents = storage_key("queue");
+    std::fs::write(&tx_data_path, &tx_data_contents[..]).unwrap();
+
+    let tx_code_path = wasm_abs_path(TX_WRITE_STORAGE_KEY_WASM);
+    let tx_code_contents = std::fs::read(&tx_code_path).unwrap();
 
     let tx_data_path = tx_data_path.to_string_lossy().to_string();
-    let tx_code_path = wasm_abs_path(TX_WRITE_STORAGE_KEY_WASM)
-        .to_string_lossy()
-        .to_string();
+    let tx_code_path = tx_code_path.to_string_lossy().to_string();
     let ledger_addr = get_actor_rpc(&test, &SOLE_VALIDATOR);
     let tx_args = vec![
         "tx",
@@ -92,3 +100,25 @@ fn ethbridge() {
             client.assert_success();
         }
     }
+
+    println!(
+        "Test the same transaction signed with a protocol key is accepted"
+    );
+    #[cfg(feature = "ferveo-tpke")]
+    {
+        let tx_data_contents = tx_data_contents.to_owned().clone().into_bytes();
+        let unsigned = ProtocolTxType::EthereumBridgeUpdate(Tx::new(
+            tx_code_contents,
+            Some(tx_data_contents),
+        ));
+
+        // TODO: get the sole validator's protocol sk somehow - this one below
+        //  was generated for a local devchain
+        const ARBRITRARY_PROTOCOL_SK_HEX: &str = "00d984d85de44dfc7a1fbca7db43dae6afe38f60244f913cf35a4f0bcdd8d135c8";
+        let protocol_sk =
+            common::SecretKey::from_str(ARBRITRARY_PROTOCOL_SK_HEX).unwrap();
+        let protocol_pk = protocol_sk.ref_to();
+        let _signed = unsigned.sign(&protocol_pk, &protocol_sk);
+        // TODO: submit the protocol-signed transaction to the ledger
+    }
+}
