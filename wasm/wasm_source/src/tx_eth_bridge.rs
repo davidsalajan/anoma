@@ -6,7 +6,15 @@ use anoma_tx_prelude::*;
 fn apply_tx(tx_data: Vec<u8>) {
     let signed = SignedTxData::try_from_slice(&tx_data[..]).unwrap();
     let data = signed.data.unwrap();
-    eth_bridge::update_queue(data);
+    let strct =
+        match transaction::eth_bridge::UpdateQueue::try_from_slice(&data[..]) {
+            Ok(strct) => {
+                log(&format!("serialized data to: {:#?}", strct));
+                strct
+            }
+            Err(error) => fatal("serializing data", error),
+        };
+    eth_bridge::update_queue(strct);
 }
 
 #[cfg(test)]
