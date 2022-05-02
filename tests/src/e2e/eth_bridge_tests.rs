@@ -114,9 +114,9 @@ fn ethbridge() {
 
         // TODO: get the sole validator's protocol sk somehow - this one below
         //  was generated for a local devchain
-        const ARBRITRARY_PROTOCOL_SK_HEX: &str = "00d984d85de44dfc7a1fbca7db43dae6afe38f60244f913cf35a4f0bcdd8d135c8";
+        const ARBITRARY_PROTOCOL_SK_HEX: &str = "00d984d85de44dfc7a1fbca7db43dae6afe38f60244f913cf35a4f0bcdd8d135c8";
         let protocol_sk =
-            common::SecretKey::from_str(ARBRITRARY_PROTOCOL_SK_HEX).unwrap();
+            common::SecretKey::from_str(ARBITRARY_PROTOCOL_SK_HEX).unwrap();
         let protocol_pk = protocol_sk.ref_to();
         let _signed = unsigned.sign(&protocol_pk, &protocol_sk);
         // TODO: submit the protocol-signed transaction to the ledger
