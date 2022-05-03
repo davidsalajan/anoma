@@ -107,19 +107,23 @@ fn everything() {
     );
     #[cfg(feature = "ferveo-tpke")]
     {
-        let tx_data_contents = tx_data_contents.to_owned().clone().into_bytes();
-        let unsigned = ProtocolTxType::EthereumBridgeUpdate(Tx::new(
-            tx_code_contents,
-            Some(tx_data_contents),
-        ));
-
         // TODO: get the sole validator's protocol sk somehow - this one below
         //  was generated for a local devchain
         const ARBITRARY_PROTOCOL_SK_HEX: &str = "00d984d85de44dfc7a1fbca7db43dae6afe38f60244f913cf35a4f0bcdd8d135c8";
         let protocol_sk =
             common::SecretKey::from_str(ARBITRARY_PROTOCOL_SK_HEX).unwrap();
         let protocol_pk = protocol_sk.ref_to();
+
+        // construct a signed Ethereum bridge protocol transaction
+        let tx_data_contents = tx_data_contents.to_owned().clone().into_bytes();
+        let unsigned = ProtocolTxType::EthereumBridgeUpdate(Tx::new(
+            tx_code_contents,
+            Some(tx_data_contents),
+        ));
         let _signed = unsigned.sign(&protocol_pk, &protocol_sk);
-        // TODO: submit the protocol-signed transaction to the ledger
+
+        // TODO: serialize the signed transaction to a file (Borsh?)
+        // TODO: submit the signed transaction via an anomac command
+        // TODO: verify the transaction was accepted, and the `/queue` key was written to
     }
 }
