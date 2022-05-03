@@ -25,14 +25,14 @@ fn storage_key(path: &str) -> String {
 }
 
 #[test]
-fn ethbridge() {
+fn everything() {
     const LEDGER_STARTUP_TIMEOUT_SECONDS: u64 = 30;
     const CLIENT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
     const SOLE_VALIDATOR: Who = Who::Validator(0);
 
     let test = setup::single_node_net().unwrap();
 
-    let mut ledger = run_as!(
+    let mut anoman_ledger = run_as!(
         test,
         SOLE_VALIDATOR,
         Bin::Node,
@@ -40,13 +40,14 @@ fn ethbridge() {
         Some(LEDGER_STARTUP_TIMEOUT_SECONDS)
     )
     .unwrap();
-    ledger.exp_string("Anoma ledger node started").unwrap();
-    ledger.exp_string("Tendermint node started").unwrap();
-    ledger.exp_string("Committed block hash").unwrap();
+    anoman_ledger
+        .exp_string("Anoma ledger node started")
+        .unwrap();
+    anoman_ledger.exp_string("Tendermint node started").unwrap();
+    anoman_ledger.exp_string("Committed block hash").unwrap();
 
-    let tx_data_path = test.base_dir.path().join("tx.data");
-    let tx_data_contents = storage_key("queue");
-    std::fs::write(&tx_data_path, &tx_data_contents[..]).unwrap();
+    let tx_data_path = test.base_dir.path().join("queue_storage_key.txt");
+    std::fs::write(&tx_data_path, &storage_key("queue")[..]).unwrap();
 
     let tx_code_path = wasm_abs_path(TX_WRITE_STORAGE_KEY_WASM);
     let tx_code_contents = std::fs::read(&tx_code_path).unwrap();
@@ -75,7 +76,7 @@ fn ethbridge() {
             } else {
                 tx_args.clone()
             };
-            let mut client = run!(
+            let mut anomac_tx = run!(
                 test,
                 Bin::Client,
                 tx_args,
@@ -85,19 +86,19 @@ fn ethbridge() {
 
             if !dry_run {
                 if !cfg!(feature = "ABCI") {
-                    client.exp_string("Transaction accepted").unwrap();
+                    anomac_tx.exp_string("Transaction accepted").unwrap();
                 }
-                client.exp_string("Transaction applied").unwrap();
+                anomac_tx.exp_string("Transaction applied").unwrap();
             }
             // TODO: we should check here explicitly with the ledger via a
             //  Tendermint RPC call that the path `value/#EthBridge/queue`
             //  is unchanged rather than relying solely  on looking at anomac
             //  stdout.
-            client.exp_string("Transaction is invalid").unwrap();
-            client
+            anomac_tx.exp_string("Transaction is invalid").unwrap();
+            anomac_tx
                 .exp_string(&format!("Rejected: {}", ETH_BRIDGE_ADDRESS))
                 .unwrap();
-            client.assert_success();
+            anomac_tx.assert_success();
         }
     }
 
